@@ -1,0 +1,7 @@
+# Style
+Style/ClassAndModuleChildren:
+  EnforcedStyle: compact
+
+# Metrics
+Metrics/LineLength:
+  Max: 120
