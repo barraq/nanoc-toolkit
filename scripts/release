@@ -1,0 +1,96 @@
+#!/usr/bin/env ruby
+# Inspired from Nanoc by @ddfreyne
+
+require 'fileutils'
+require 'octokit'
+
+GEMSPEC_NAME = 'nanoc-toolkit'.freeze
+GITHUB_REPOSITORY = 'barraq/nanoc-toolkit'.freeze
+VERSION_FILE = './lib/nanoc/toolkit/version'.freeze
+VERSION_CONSTANT = Nanoc::Toolkit::VERSION
+
+def run(*args)
+  puts 'I will execute the following:'
+  puts '    ' + args.map { |a| a =~ /\s/ ? a.inspect : a }.join(' ')
+
+  continue? 'Is this correct? [y/N] '
+
+  system('echo', *args)
+  system(*args)
+
+  continue? 'Continue? [y/N] '
+end
+
+def continue?(question)
+  print question
+  return if gets.strip.casecmp('y').zero?
+
+  $stderr.puts 'Answer was not Y; release aborted.'
+  exit 1
+end
+
+puts '=== Logging in to GitHub’s API…'
+client = Octokit::Client.new(netrc: true)
+puts
+
+puts '=== Deleting old *.gem files…'
+Dir['*.gem'].each do |fn|
+  puts "  #{fn}…"
+  FileUtils.rm_f(fn)
+end
+puts
+
+puts '=== Verifying presence of release date…'
+unless File.readlines('NEWS.md').drop(2).first =~ / \(\d{4}-\d{2}-\d{2}\)$/
+  $stderr.puts 'No proper release date found!'
+  exit 1
+end
+puts
+
+puts '=== Building new gem…'
+run('gem', 'build', "#{GEMSPEC_NAME}.gemspec")
+puts
+
+puts '=== Reading version…'
+require VERSION_FILE
+puts "Version = #{VERSION_CONSTANT}"
+puts
+
+puts '=== Verifying that release does not yet exist…'
+releases = client.releases(GITHUB_REPOSITORY)
+release = releases.find { |r| r.tag_name == VERSION_CONSTANT }
+if release
+  $stderr.puts 'Release already exists!'
+  $stderr.puts 'ABORTED!'
+  exit 1
+end
+puts
+
+puts '=== Creating Git tag…'
+run('git', 'tag', '--sign', '--annotate', VERSION_CONSTANT, '--message', "Version #{VERSION_CONSTANT}")
+puts
+
+puts '=== Pushing Git data…'
+run('git', 'push', 'origin')
+run('git', 'push', 'origin', '--tags')
+puts
+
+puts '=== Pushing gem…'
+run('gem', 'push', "#{GEMSPEC_NAME}-#{VERSION_CONSTANT}.gem")
+puts
+
+puts '=== Reading release notes…'
+release_notes = File.readlines('NEWS.md').drop(4).take_while { |l| l !~ /^## / }.join
+puts
+
+puts '=== Creating release on GitHub…'
+sleep 3 # Give GitHub some time to detect the new tag
+is_prerelease = /a|b|rc/.match(VERSION_CONSTANT) || /^0/.match(VERSION_CONSTANT)
+client.create_release(
+  GITHUB_REPOSITORY, VERSION_CONSTANT,
+  prerelease: !is_prerelease.nil?,
+  body: release_notes
+)
+puts
+
+puts 'DONE!'
